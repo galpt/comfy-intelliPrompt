@@ -8,9 +8,6 @@ authors = [
 readme = "README.md"
 license = {text = "GPL-3.0"}
 requires-python = ">=3.10"
-dependencies = [
-    "requests>=2.28.0",
-]
 
 [project.urls]
 Homepage = "https://github.com/galpt/comfy-intelliPrompt"

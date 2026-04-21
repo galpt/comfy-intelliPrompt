@@ -12,7 +12,7 @@ An intelligent prompt optimizer for ComfyUI that automatically fixes typos, bala
 ✅ **Parentheses Balancing** - Fixes unbalanced `()`, `[]`, `{}`  
 ✅ **Punctuation Fix** - Ensures proper ending punctuation  
 ✅ **Quality Enhancement** - Adds quality tags (masterpiece, best quality, etc.)  
-✅ **AI-Powered Mode** - Uses Pollinations AI for advanced prompt enhancement when `requests` is available  
+✅ **AI-Powered Mode** - Uses Pollinations AI for advanced prompt enhancement when optional API dependencies are available  
 ✅ **Offline Mode** - Works completely offline with local processing  
 ✅ **Graceful Fallback** - Missing API/runtime deps no longer block node registration; local mode still works  
 ✅ **Non-English Support** - Translates prompts to English via AI  
@@ -20,12 +20,36 @@ An intelligent prompt optimizer for ComfyUI that automatically fixes typos, bala
 
 ## Installation
 
-### Option 1: Clone to custom_nodes (Recommended)
+### Fresh install with comfy-sage
+
+For a new `comfy-sage` install, the supported base/local flow is:
+
+1. Bootstrap `comfy-sage` once with `./launch-comfy.sh`
+2. Clone `comfy-intelliPrompt` into `ComfyUI/custom_nodes`
+3. Relaunch `./launch-comfy.sh`
+4. Use the node immediately in local mode without any manual `pip install` step
+
+```bash
+# from the unpacked comfy-sage directory
+./launch-comfy.sh
+
+# after the first launch completes
+git clone https://github.com/galpt/comfy-intelliPrompt.git ComfyUI/custom_nodes/comfy-intelliPrompt
+
+# relaunch so ComfyUI registers the node
+./launch-comfy.sh
+```
+
+API mode is optional. If its extra dependency is not present or the API is unavailable, intelliPrompt still registers and falls back to local processing.
+
+### Standard ComfyUI install
 
 ```bash
 cd /path/to/ComfyUI/custom_nodes
 git clone https://github.com/galpt/comfy-intelliPrompt.git
 ```
+
+Restart ComfyUI after cloning.
 
 ### Option 2: Copy folder
 
@@ -37,7 +61,8 @@ git clone https://github.com/galpt/comfy-intelliPrompt.git
 
 - ComfyUI
 - Python 3.10+
-- `requests` is optional and only needed for Pollinations API mode
+- No extra Python packages are required for base/local prompt cleanup
+- Optional API enrichment only applies when its runtime dependency is available
 - `torch` is only required when executing `IntelliPromptResolutionPresetLatent`
 - `comfy.model_management` is only used when available inside a ComfyUI runtime
 
@@ -79,7 +104,7 @@ git clone https://github.com/galpt/comfy-intelliPrompt.git
 
 ### Local Processing (always available)
 
-When `use_api=False`, `requests` is missing, or the API fails, intelliPrompt performs:
+When `use_api=False`, optional API support is unavailable, or the API fails, intelliPrompt performs:
 
 1. **Typo Correction**: Fixes 20+ common English typos
 2. **Parenthesis Balancing**: Ensures `(` `)`, `[` `]`, `{` `}` are balanced
@@ -89,7 +114,7 @@ When `use_api=False`, `requests` is missing, or the API fails, intelliPrompt per
 
 ### AI Processing (optional)
 
-When `use_api=True` and `requests` is available, intelliPrompt sends the prompt to Pollinations AI which:
+When `use_api=True` and optional API support is available, intelliPrompt sends the prompt to Pollinations AI which:
 - Translates non-English to English
 - Adds rich sensory details (lighting, mood, colors, atmosphere)
 - Expands style references and artist mentions
@@ -100,19 +125,9 @@ If the API is unavailable or fails, it automatically falls back to local process
 
 ### Runtime compatibility notes
 
-- `__init__.py` avoids top-level imports of `requests`, `torch`, and `comfy.model_management` so missing optional/runtime dependencies do not break node registration.
+- `__init__.py` avoids top-level imports of optional/runtime dependencies so missing extras do not break node registration.
 - `intelliPrompt` always keeps a local fallback path available.
 - `IntelliPromptResolutionPresetLatent` stays registered even in reduced environments; it raises a clear runtime error only if executed without `torch`.
-
-### comfy-sage deployment note
-
-For this repo's bounded compatibility fix, edit the source copy under `projx/comfy-configs/comfy-intelliPrompt` first, then sync the edited source files into the live comfy-sage install at:
-
-```text
-/intel-drive/sdxl/comfy-sage-linux-x86_64-v1.0.1/ComfyUI/custom_nodes/comfy-intelliPrompt
-```
-
-Restart comfy-sage/ComfyUI after syncing so the live node registration picks up the updated files.
 
 ## Why intelliPrompt?
 
