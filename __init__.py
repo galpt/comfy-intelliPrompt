@@ -23,17 +23,68 @@ License: GPL-3.0
 Repository: https://github.com/galpt/comfy-intelliPrompt
 """
 
+import importlib
 import math
 import re
+from functools import lru_cache
 from typing import Optional, Tuple
 
-import requests
-import torch
 
-try:
-    import comfy.model_management
-except ImportError:  # pragma: no cover - only available inside ComfyUI runtime
-    comfy = None
+@lru_cache(maxsize=None)
+def _guarded_import(module_name: str):
+    try:
+        return importlib.import_module(module_name), None
+    except Exception as exc:  # pragma: no cover - depends on host runtime
+        return None, exc
+
+
+def _get_optional_module(module_name: str):
+    module, _ = _guarded_import(module_name)
+    return module
+
+
+def _get_optional_import_error(module_name: str):
+    _, error = _guarded_import(module_name)
+    return error
+
+
+def _format_missing_dependency(module_name: str, context: str) -> str:
+    error = _get_optional_import_error(module_name)
+    details = f" ({error})" if error else ""
+    return f"{context} requires optional dependency '{module_name}' at runtime{details}."
+
+
+def _get_requests_exception(name: str):
+    requests_module = _get_optional_module("requests")
+    if requests_module is None:
+        return None
+
+    exceptions_module = getattr(requests_module, "exceptions", None)
+    exception_type = getattr(exceptions_module, name, None)
+    if isinstance(exception_type, type) and issubclass(exception_type, Exception):
+        return exception_type
+    return None
+
+
+def _balance_delimiter_pair(text: str, open_char: str, close_char: str) -> str:
+    balanced = []
+    depth = 0
+
+    for char in text:
+        if char == open_char:
+            depth += 1
+            balanced.append(char)
+        elif char == close_char:
+            if depth > 0:
+                depth -= 1
+                balanced.append(char)
+        else:
+            balanced.append(char)
+
+    if depth > 0:
+        balanced.append(close_char * depth)
+
+    return "".join(balanced)
 
 
 class intelliPrompt:
@@ -62,6 +113,8 @@ Respond ONLY with the optimized prompt text. No explanations or formatting."""
 
     SEED_FALLBACK = 42
     SEED_MAX = 9_999_999_999
+    API_TIMEOUT_SECONDS = 10
+    _warned_api_fallbacks = set()
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -196,38 +249,18 @@ Respond ONLY with the optimized prompt text. No explanations or formatting."""
 
     def _balance_delimiters(self, text: str) -> str:
         optimized = text
-
-        open_parens = optimized.count("(")
-        close_parens = optimized.count(")")
-        if open_parens > close_parens:
-            optimized += ")" * (open_parens - close_parens)
-        elif close_parens > open_parens:
-            for _ in range(close_parens - open_parens):
-                idx = optimized.rfind(")")
-                if idx > 0:
-                    optimized = optimized[:idx] + optimized[idx + 1 :]
-
-        open_brackets = optimized.count("[")
-        close_brackets = optimized.count("]")
-        if open_brackets > close_brackets:
-            optimized += "]" * (open_brackets - close_brackets)
-        elif close_brackets > open_brackets:
-            for _ in range(close_brackets - open_brackets):
-                idx = optimized.rfind("]")
-                if idx > 0:
-                    optimized = optimized[:idx] + optimized[idx + 1 :]
-
-        open_braces = optimized.count("{")
-        close_braces = optimized.count("}")
-        if open_braces > close_braces:
-            optimized += "}" * (open_braces - close_braces)
-        elif close_braces > open_braces:
-            for _ in range(close_braces - open_braces):
-                idx = optimized.rfind("}")
-                if idx > 0:
-                    optimized = optimized[:idx] + optimized[idx + 1 :]
-
+        optimized = _balance_delimiter_pair(optimized, "(", ")")
+        optimized = _balance_delimiter_pair(optimized, "[", "]")
+        optimized = _balance_delimiter_pair(optimized, "{", "}")
         return optimized
+
+    @classmethod
+    def _warn_api_fallback(cls, key: str, message: str):
+        if key in cls._warned_api_fallbacks:
+            return
+
+        cls._warned_api_fallbacks.add(key)
+        print(f"[intelliPrompt] {message}")
 
     def _normalize_prompt_text(self, text: str) -> str:
         normalized = re.sub(r"\s+", " ", text)
@@ -268,6 +301,14 @@ Respond ONLY with the optimized prompt text. No explanations or formatting."""
         return optimized
 
     def _api_process(self, prompt: str, optimizer_seed: int) -> Optional[str]:
+        requests_module = _get_optional_module("requests")
+        if requests_module is None:
+            self._warn_api_fallback(
+                "missing-requests",
+                "API mode unavailable because requests is missing; using local processing.",
+            )
+            return None
+
         try:
             payload = {
                 "messages": [
@@ -279,24 +320,46 @@ Respond ONLY with the optimized prompt text. No explanations or formatting."""
             }
             headers = {"Content-Type": "application/json"}
 
-            response = requests.post(
+            response = requests_module.post(
                 self.api_url,
                 json=payload,
                 headers=headers,
-                timeout=30,
+                timeout=self.API_TIMEOUT_SECONDS,
             )
 
             if response.status_code == 200:
                 result = response.text.strip()
                 if result:
                     return result
+                self._warn_api_fallback(
+                    "empty-response",
+                    "API returned an empty response; using local processing.",
+                )
+            else:
+                self._warn_api_fallback(
+                    f"status-{response.status_code}",
+                    f"API returned status {response.status_code}; using local processing.",
+                )
 
-        except requests.exceptions.Timeout:
-            print("[intelliPrompt] API timeout - using local processing")
-        except requests.exceptions.RequestException as exc:
-            print(f"[intelliPrompt] API error: {exc}")
         except Exception as exc:
-            print(f"[intelliPrompt] Unexpected error: {exc}")
+            timeout_exception = _get_requests_exception("Timeout")
+            request_exception = _get_requests_exception("RequestException")
+
+            if timeout_exception and isinstance(exc, timeout_exception):
+                self._warn_api_fallback(
+                    "timeout",
+                    f"API timeout after {self.API_TIMEOUT_SECONDS}s; using local processing.",
+                )
+            elif request_exception and isinstance(exc, request_exception):
+                self._warn_api_fallback(
+                    f"request-{type(exc).__name__}",
+                    f"API request error ({type(exc).__name__}); using local processing.",
+                )
+            else:
+                self._warn_api_fallback(
+                    f"unexpected-{type(exc).__name__}",
+                    f"Unexpected API error ({type(exc).__name__}); using local processing.",
+                )
 
         return None
 
@@ -365,13 +428,23 @@ class IntelliPromptResolutionPresetLatent:
 
     @staticmethod
     def _intermediate_device():
-        if "comfy" in globals() and comfy is not None:
-            return comfy.model_management.intermediate_device()
+        comfy_model_management = _get_optional_module("comfy.model_management")
+        if comfy_model_management is not None:
+            try:
+                return comfy_model_management.intermediate_device()
+            except Exception as exc:  # pragma: no cover - host runtime specific
+                print(f"[intelliPrompt] Unable to resolve Comfy intermediate device: {exc}")
         return "cpu"
 
     def generate(self, preset: str, batch_size: int = 1):
+        torch_module = _get_optional_module("torch")
+        if torch_module is None:
+            raise RuntimeError(
+                _format_missing_dependency("torch", "IntelliPromptResolutionPresetLatent.generate()")
+            )
+
         width, height = self.RESOLUTION_PRESETS.get(preset, self.RESOLUTION_PRESETS[self.DEFAULT_PRESET])
-        latent = torch.zeros(
+        latent = torch_module.zeros(
             [batch_size, 4, height // 8, width // 8],
             device=self._intermediate_device(),
         )

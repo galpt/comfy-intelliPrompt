@@ -12,10 +12,11 @@ An intelligent prompt optimizer for ComfyUI that automatically fixes typos, bala
 ✅ **Parentheses Balancing** - Fixes unbalanced `()`, `[]`, `{}`  
 ✅ **Punctuation Fix** - Ensures proper ending punctuation  
 ✅ **Quality Enhancement** - Adds quality tags (masterpiece, best quality, etc.)  
-✅ **AI-Powered Mode** - Uses Pollinations AI for advanced prompt enhancement  
+✅ **AI-Powered Mode** - Uses Pollinations AI for advanced prompt enhancement when `requests` is available  
 ✅ **Offline Mode** - Works completely offline with local processing  
-✅ **Graceful Fallback** - Falls back to local processing if API fails  
+✅ **Graceful Fallback** - Missing API/runtime deps no longer block node registration; local mode still works  
 ✅ **Non-English Support** - Translates prompts to English via AI  
+✅ **Lazy Torch Use** - The latent preset node registers even if `torch` is unavailable and only errors when executed  
 
 ## Installation
 
@@ -36,7 +37,9 @@ git clone https://github.com/galpt/comfy-intelliPrompt.git
 
 - ComfyUI
 - Python 3.10+
-- `requests` library (usually pre-installed with ComfyUI)
+- `requests` is optional and only needed for Pollinations API mode
+- `torch` is only required when executing `IntelliPromptResolutionPresetLatent`
+- `comfy.model_management` is only used when available inside a ComfyUI runtime
 
 ## Usage
 
@@ -44,8 +47,9 @@ git clone https://github.com/galpt/comfy-intelliPrompt.git
 2. Add it to your workflow between your prompt input and CLIPTextEncode
 3. Configure:
    - **prompt**: Your input prompt
-   - **seed**: Random seed (for AI mode consistency)
+   - **optimizer_seed**: Random seed (for AI mode consistency; protected from ComfyUI's special `seed` handling)
    - **use_api**: Enable/disable AI-powered processing
+   - **preserve_negative_terms**: Conservative cleanup path for negative prompts
    - **quality_tags**: Additional tags to add (optional)
 
 ### Node Inputs
@@ -53,8 +57,9 @@ git clone https://github.com/galpt/comfy-intelliPrompt.git
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
 | prompt | STRING | "A beautiful sunset..." | Your input prompt (positive or negative) |
-| seed | INT | 42 | Random seed for AI API calls |
+| optimizer_seed | INT | 42 | Random seed for AI API calls |
 | use_api | BOOLEAN | True | Use Pollinations AI (True) or local only (False) |
+| preserve_negative_terms | BOOLEAN | False | Conservative local cleanup for negative prompts; disables enrichment/API |
 | quality_tags | STRING | "masterpiece, best quality..." | Additional quality tags to add (optional) |
 
 ### Node Outputs
@@ -74,7 +79,7 @@ git clone https://github.com/galpt/comfy-intelliPrompt.git
 
 ### Local Processing (always available)
 
-When `use_api=False` or when API fails, intelliPrompt performs:
+When `use_api=False`, `requests` is missing, or the API fails, intelliPrompt performs:
 
 1. **Typo Correction**: Fixes 20+ common English typos
 2. **Parenthesis Balancing**: Ensures `(` `)`, `[` `]`, `{` `}` are balanced
@@ -84,20 +89,36 @@ When `use_api=False` or when API fails, intelliPrompt performs:
 
 ### AI Processing (optional)
 
-When `use_api=True`, intelliPrompt sends the prompt to Pollinations AI which:
+When `use_api=True` and `requests` is available, intelliPrompt sends the prompt to Pollinations AI which:
 - Translates non-English to English
 - Adds rich sensory details (lighting, mood, colors, atmosphere)
 - Expands style references and artist mentions
 - Avoids repetitive vocabulary
 - Optimizes for text-to-image models
 
-If the API fails, it automatically falls back to local processing.
+If the API is unavailable or fails, it automatically falls back to local processing.
+
+### Runtime compatibility notes
+
+- `__init__.py` avoids top-level imports of `requests`, `torch`, and `comfy.model_management` so missing optional/runtime dependencies do not break node registration.
+- `intelliPrompt` always keeps a local fallback path available.
+- `IntelliPromptResolutionPresetLatent` stays registered even in reduced environments; it raises a clear runtime error only if executed without `torch`.
+
+### comfy-sage deployment note
+
+For this repo's bounded compatibility fix, edit the source copy under `projx/comfy-configs/comfy-intelliPrompt` first, then sync the edited source files into the live comfy-sage install at:
+
+```text
+/intel-drive/sdxl/comfy-sage-linux-x86_64-v1.0.1/ComfyUI/custom_nodes/comfy-intelliPrompt
+```
+
+Restart comfy-sage/ComfyUI after syncing so the live node registration picks up the updated files.
 
 ## Why intelliPrompt?
 
 Unlike other prompt optimizers, intelliPrompt:
 
-1. **Never crashes** - Guaranteed fallback to local processing
+1. **Keeps prompt cleanup available when API mode fails** - Falls back to local processing when API optimization is unavailable
 2. **Works offline** - Local mode doesn't need internet
 3. **Fast processing** - Local mode is instant
 4. **Easy to use** - Simple node interface
